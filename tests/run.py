@@ -38,6 +38,7 @@ EXPECT = {
     "mal-typosquat": ("MEDIUM", "typosquat"),
     "mal-submodule-stealer": ("CRITICAL", "credential_exfil"),
     "mal-cmd-var-curl": ("CRITICAL", "download_execute"),
+    "mal-loop-cradle": ("CRITICAL", "download_execute"),
 }
 
 STEALER = """import bpy, os, json, urllib.request

@@ -105,7 +105,7 @@ PIP_RE = re.compile(r"\bpip3?\b[^\n]{0,40}\binstall\b|-m\s*pip\b|ensurepip")
 PIP_REMOTE = re.compile(r"git\+|https?://|\.whl\b|--index-url|--extra-index-url|-i\s+http")
 SHELL_NAMES = re.compile(r"^(?:/bin/|/usr/bin/)?(?:ba|z|da|k)?sh$|^cmd(?:\.exe)?$|^powershell(?:\.exe)?$|^pwsh$")
 BENIGN_CMDS = re.compile(
-    r"^(?:nvidia-smi|nvcc|git|uname|lscpu|hostname|which|where|explorer(?:\.exe)?|open|xdg-open|start|"
+    r"^(?:nvidia-smi|nvcc|git|uname|lscpu|hostname|which|where|whereis|type|command|explorer(?:\.exe)?|open|xdg-open|start|"
     r"ninja|cmake|make|gcc|g\+\+|clang|c\+\+|nproc|ls|python3?|sys\.executable|bpy\.app\.binary_path|"
     r"ffmpeg|ffprobe|magick|convert|oiiotool|maketx|txmake|blender(?:\.exe)?|nautilus|dolphin|thunar|"
     r"osascript|pbcopy|pbpaste|xclip|xsel|wl-copy|wl-paste|clip(?:\.exe)?|powershell(?:\.exe)?|"
@@ -360,6 +360,7 @@ class _Visitor(ast.NodeVisitor):
         self.net_vars = set()    # names holding a network response (data = urlopen(u).read())
         self.template_vars = set()  # names holding a code template (name = f"bpy.types.{n}")
         self.var_skel = {}          # name -> literal text of what was assigned (command strings)
+        self.list_cmds = {}         # name -> literal command list assigned to it
 
     def visit_Import(self, node):
         for a in node.names:
@@ -482,6 +483,11 @@ class _Visitor(ast.NodeVisitor):
             td = self.dotted(t) if isinstance(t, (ast.Attribute, ast.Name)) else None
             if td:
                 self.assigns.append((td, node.value, self.when(), node))
+        lc = self._literal_cmds(node.value)
+        if lc:
+            for t in node.targets:
+                if isinstance(t, ast.Name):
+                    self.list_cmds[t.id] = lc
         sk = " ".join(_str_consts(node.value, limit=20))
         if sk:
             for t in node.targets:
@@ -497,6 +503,39 @@ class _Visitor(ast.NodeVisitor):
                 for n in ast.walk(t):
                     if isinstance(n, ast.Name):
                         self.net_vars.add(n.id)
+        self.generic_visit(node)
+
+    @staticmethod
+    def _literal_cmds(it):
+        """[["where", "python"], "which python"] -> (first tokens, joined text) or None."""
+        if not isinstance(it, (ast.List, ast.Tuple)) or not it.elts:
+            return None
+        firsts, skel = [], []
+        for e in it.elts:
+            if isinstance(e, ast.Constant) and isinstance(e.value, str):
+                firsts.append(e.value.split()[0] if e.value.split() else "")
+                skel.append(e.value)
+            elif isinstance(e, (ast.List, ast.Tuple)) and e.elts and all(
+                    isinstance(x, ast.Constant) and isinstance(x.value, str) for x in e.elts):
+                firsts.append(e.elts[0].value)
+                skel.append(" ".join(x.value for x in e.elts))
+            else:
+                return None
+        return firsts, skel
+
+    def visit_For(self, node):
+        # for cmd in [["where", "python"], ["which", "python"]]: run(cmd, shell=True)
+        it = node.iter
+        lc = self._literal_cmds(it)
+        if lc is None and isinstance(it, ast.Name):
+            lc = self.list_cmds.get(it.id)
+        if lc and isinstance(node.target, ast.Name):
+            firsts, skel = lc
+            if True:
+                name = node.target.id
+                self.var_skel[name] = (self.var_skel.get(name, "") + " " + " ".join(skel))[-2000:]
+                if all(f and BENIGN_CMDS.match(os.path.basename(f)) for f in firsts):
+                    self.benign_cmd_names.add(name)
         self.generic_visit(node)
 
     def visit_Subscript(self, node):
@@ -1692,7 +1731,9 @@ def main(argv=None):
         for r in results:
             _print(r, verbose)
     worst = max((SEV_ORDER.get(r["risk_level"], 0) for r in results), default=0)
-    return 2 if worst >= SEV_ORDER["HIGH"] else 0
+    if worst >= SEV_ORDER["HIGH"]:
+        return 2
+    return 1 if any(r["risk_level"] == "ERROR" for r in results) else 0
 
 
 if __name__ == "__main__":
