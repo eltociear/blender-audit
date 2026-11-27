@@ -47,6 +47,7 @@ import gzip
 import hashlib
 import io
 import json
+import posixpath
 import os
 import re
 import shutil
@@ -1307,12 +1308,12 @@ def _imports_of(path, text, pkg_files, root):
         tree = ast.parse(text)
     except (SyntaxError, ValueError, RecursionError, MemoryError):
         return out, True
-    base = os.path.dirname(path)
-    pkg = os.path.basename(root) if root else ""
+    base = posixpath.dirname(path)
+    pkg = posixpath.basename(root) if root else ""
 
     def resolve(d, mod):
-        p = os.path.normpath(os.path.join(d, mod.replace(".", "/"))) if mod else d
-        for c in (p + ".py", os.path.join(p, "__init__.py")):
+        p = posixpath.normpath(posixpath.join(d, mod.replace(".", "/"))) if mod else d
+        for c in (p + ".py", posixpath.join(p, "__init__.py")):
             c = c.lstrip("./") if c.startswith("./") else c
             if c in pkg_files:
                 out.add(c)
@@ -1323,9 +1324,9 @@ def _imports_of(path, text, pkg_files, root):
             if n.level:
                 d = base
                 for _ in range(n.level - 1):
-                    d = os.path.dirname(d)
+                    d = posixpath.dirname(d)
             elif pkg and (n.module or "").split(".")[0] == pkg:
-                d = os.path.dirname(root) if root else ""
+                d = posixpath.dirname(root) if root else ""
             else:
                 continue
             mod = n.module or ""
@@ -1335,7 +1336,7 @@ def _imports_of(path, text, pkg_files, root):
         elif isinstance(n, ast.Import) and pkg:
             for a in n.names:
                 if a.name.split(".")[0] == pkg:
-                    resolve(os.path.dirname(root) if root else "", a.name)
+                    resolve(posixpath.dirname(root) if root else "", a.name)
     return out, dyn
 
 
@@ -1354,7 +1355,7 @@ def loaded_set(files, roots):
         pkg_files = {p for p in py if (r == "" or p.startswith(r + "/"))}
         rel = lambda p: p[len(r) + 1:] if r else p
         pkg_files = {p for p in pkg_files if _importable(rel(p)) and not NON_RUNTIME.search(rel(p))}
-        start = os.path.join(r, "__init__.py") if r else "__init__.py"
+        start = posixpath.join(r, "__init__.py") if r else "__init__.py"
         if start not in pkg_files:
             out |= pkg_files
             continue
@@ -1365,12 +1366,12 @@ def loaded_set(files, roots):
                 continue
             seen.add(f)
             # a package's __init__ runs whenever any of its submodules is imported
-            d = os.path.dirname(f)
+            d = posixpath.dirname(f)
             while d and d != r and (r == "" or d.startswith(r)):
-                init = os.path.join(d, "__init__.py")
+                init = posixpath.join(d, "__init__.py")
                 if init in pkg_files and init not in seen:
                     stack.append(init)
-                d = os.path.dirname(d)
+                d = posixpath.dirname(d)
             got, dyn = _imports_of(f, files[f], pkg_files, r)
             dynamic = dynamic or dyn
             stack.extend(got - seen)
