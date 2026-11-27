@@ -1541,7 +1541,9 @@ def _read_capped(p, n):
 def read_tar(fileobj):
     files, blends, total = {}, {}, 0
     budget = ArchiveBudget()
-    with tarfile.open(fileobj=fileobj, mode="r|*") as t:
+    seekable = getattr(fileobj, "seekable", lambda: False)()
+    # seekable (local) archives skip over oversized members without streaming them through Python
+    with tarfile.open(fileobj=fileobj, mode="r:*" if seekable else "r|*") as t:
         for m in t:
             full = safe_member(m.name)
             if not m.isreg() or not full:
